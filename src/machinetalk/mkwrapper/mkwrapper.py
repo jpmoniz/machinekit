@@ -29,6 +29,7 @@ from config_pb2 import *
 from types_pb2 import *
 from status_pb2 import *
 from preview_pb2 import *
+from motcmds_pb2 import *
 from object_pb2 import ProtocolParameters
 
 
@@ -73,10 +74,11 @@ class CustomFTPHandler(FTPHandler):
 
 class FileService(threading.Thread):
 
-    def __init__(self, iniFile=None, ip="", svcUuid=None,
-                debug=False):
+    def __init__(self, iniFile=None, host='', svcUuid=None,
+                loopback=False, debug=False):
         self.debug = debug
-        self.ip = ip
+        self.host = host
+        self.loopback = loopback
         self.shutdown = threading.Event()
         self.running = False
 
@@ -91,13 +93,14 @@ class FileService(threading.Thread):
             sys.exit(1)
 
         self.filePort = getFreePort()
-        self.fileDsname = "ftp://" + self.ip + ":" + str(self.filePort)
+        self.fileDsname = "ftp://" + self.host + ":" + str(self.filePort)
 
         self.fileService = service.Service(type='file',
                                    svcUuid=svcUuid,
                                    dsn=self.fileDsname,
                                    port=self.filePort,
-                                   ip=self.ip,
+                                   host=self.host,
+                                   loopback=self.loopback,
                                    debug=self.debug)
 
         #FTP
@@ -115,7 +118,7 @@ class FileService(threading.Thread):
         self.handler.banner = "welcome to the GCode file service"
 
         # Instantiate FTP server class and listen on some address
-        self.address = (self.ip, self.filePort)
+        self.address = (self.host, self.filePort)
         self.server = FTPServer(self.address, self.handler)
 
         # set a limit for connections
@@ -258,11 +261,12 @@ class LinuxCNCWrapper():
     def preview_error(self, error, line):
         self.linuxcncErrors.append(error + "\non line " + str(line))
 
-    def __init__(self, context, ip,
+    def __init__(self, context, host='', loopback=False,
                 iniFile=None, svcUuid=None,
                 pollInterval=None, pingInterval=2, debug=False):
         self.debug = debug
-        self.ip = ip
+        self.host = host
+        self.loopback = loopback
         self.pingInterval = pingInterval
         self.shutdown = threading.Event()
         self.running = False
@@ -351,23 +355,31 @@ class LinuxCNCWrapper():
         self.txCommand = Container()   # Command socket - ROUTER-DEALER
         self.txError = Container()     # Error socket - PUB-SUB
         self.context = context
-        self.baseUri = "tcp://" + self.ip
+        self.baseUri = "tcp://"
+        if self.loopback:
+            self.baseUri += '127.0.0.1'
+        else:
+            self.baseUri += '*'
         self.statusSocket = context.socket(zmq.XPUB)
         self.statusSocket.setsockopt(zmq.XPUB_VERBOSE, 1)
         self.statusPort = self.statusSocket.bind_to_random_port(self.baseUri)
         self.statusDsname = self.statusSocket.get_string(zmq.LAST_ENDPOINT, encoding='utf-8')
+        self.statusDsname = self.statusDsname.replace('0.0.0.0', self.host)
         self.errorSocket = context.socket(zmq.XPUB)
         self.errorSocket.setsockopt(zmq.XPUB_VERBOSE, 1)
         self.errorPort = self.errorSocket.bind_to_random_port(self.baseUri)
         self.errorDsname = self.errorSocket.get_string(zmq.LAST_ENDPOINT, encoding='utf-8')
+        self.errorDsname = self.errorDsname.replace('0.0.0.0', self.host)
         self.commandSocket = context.socket(zmq.DEALER)
         self.commandPort = self.commandSocket.bind_to_random_port(self.baseUri)
         self.commandDsname = self.commandSocket.get_string(zmq.LAST_ENDPOINT, encoding='utf-8')
-
+        self.commandDsname = self.commandDsname.replace('0.0.0.0', self.host)
         self.preview = Preview(parameterFile=self.interpParameterFile,
                                debug=self.debug)
         (self.previewDsname, self.previewstatusDsname) = \
-        self.preview.bind(self.baseUri + ':*', self.baseUri + ':*')
+            self.preview.bind(self.baseUri + ':*', self.baseUri + ':*')
+        self.previewDsname = self.previewDsname.replace('0.0.0.0', self.host)
+        self.previewstatusDsname = self.previewstatusDsname.replace('0.0.0.0', self.host)
         self.preview.register_error_callback(self.preview_error)
         self.previewPort = urlparse(self.previewDsname).port
         self.previewstatusPort = urlparse(self.previewstatusDsname).port
@@ -376,31 +388,36 @@ class LinuxCNCWrapper():
                                    svcUuid=svcUuid,
                                    dsn=self.statusDsname,
                                    port=self.statusPort,
-                                   ip=self.ip,
+                                   host=self.host,
+                                   loopback=self.loopback,
                                    debug=self.debug)
         self.errorService = service.Service(type='error',
                                    svcUuid=svcUuid,
                                    dsn=self.errorDsname,
                                    port=self.errorPort,
-                                   ip=self.ip,
+                                   host=self.host,
+                                   loopback=self.loopback,
                                    debug=self.debug)
         self.commandService = service.Service(type='command',
                                    svcUuid=svcUuid,
                                    dsn=self.commandDsname,
                                    port=self.commandPort,
-                                   ip=self.ip,
+                                   host=self.host,
+                                   loopback=self.loopback,
                                    debug=self.debug)
         self.previewService = service.Service(type='preview',
                                    svcUuid=svcUuid,
                                    dsn=self.previewDsname,
                                    port=self.previewPort,
-                                   ip=self.ip,
+                                   host=self.host,
+                                   loopback=self.loopback,
                                    debug=self.debug)
         self.previewstatusService = service.Service(type='previewstatus',
                                    svcUuid=svcUuid,
                                    dsn=self.previewstatusDsname,
                                    port=self.previewstatusPort,
-                                   ip=self.ip,
+                                   host=self.host,
+                                   loopback=self.loopback,
                                    debug=self.debug)
 
         self.publish()
@@ -540,14 +557,14 @@ class LinuxCNCWrapper():
             self.status.config.axis_mask = 0
             self.status.config.cycle_time = 0.0
             self.status.config.debug = 0
-            self.status.config.kinematics_type = 0
+            self.status.config.kinematics_type = KINEMATICS_IDENTITY
             self.status.config.linear_units = 0.0
             self.status.config.max_acceleration = 0.0
             self.status.config.max_velocity = 0.0
-            self.status.config.program_units = 0
+            self.status.config.program_units = CANON_UNITS_INCHES
             self.status.config.default_velocity = 0.0
-            self.status.config.position_offset = 0
-            self.status.config.position_feedback = 0
+            self.status.config.position_offset = EMC_CONFIG_RELATIVE_OFFSET
+            self.status.config.position_feedback = EMC_CONFIG_ACTUAL_FEEDBACK
             self.status.config.max_feed_override = 0.0
             self.status.config.min_feed_override = 0.0
             self.status.config.max_spindle_override = 0.0
@@ -567,7 +584,7 @@ class LinuxCNCWrapper():
             self.status.config.arcdivision = 0
             self.status.config.no_force_homing = False
             self.status.config.remote_path = ""
-            self.status.config.time_units = 0
+            self.status.config.time_units = TIME_UNITS_MINUTE
             self.status.config.name = ""
             self.configFirstrun = False
 
@@ -782,7 +799,7 @@ class LinuxCNCWrapper():
             if len(self.status.config.axis) == index:
                 self.status.config.axis.add()
                 self.status.config.axis[index].index = index
-                self.status.config.axis[index].axisType = 0
+                self.status.config.axis[index].axisType = EMC_AXIS_LINEAR
                 self.status.config.axis[index].backlash = 0.0
                 self.status.config.axis[index].max_ferror = 0.0
                 self.status.config.axis[index].max_position_limit = 0.0
@@ -1053,14 +1070,14 @@ class LinuxCNCWrapper():
 
         if self.taskFirstrun:
             self.status.task.echo_serial_number = 0
-            self.status.task.exec_state = 0
+            self.status.task.exec_state = EMC_TASK_EXEC_ERROR
             self.status.task.file = ""
             self.status.task.input_timeout = False
             self.status.task.optional_stop = False
             self.status.task.read_line = 0
-            self.status.task.task_mode = 0
+            self.status.task.task_mode = EMC_TASK_MODE_MANUAL
             self.status.task.task_paused = 0
-            self.status.task.task_state = 0
+            self.status.task.task_state = EMC_TASK_STATE_ESTOP
             self.taskFirstrun = False
 
         if (self.status.task.echo_serial_number != stat.echo_serial_number):
@@ -1120,7 +1137,7 @@ class LinuxCNCWrapper():
 
         if self.interpFirstrun:
             self.status.interp.command = ""
-            self.status.interp.interp_state = 0
+            self.status.interp.interp_state = EMC_TASK_INTERP_IDLE
             self.status.interp.interpreter_errcode = 0
             self.interpFirstrun = False
 
@@ -1226,7 +1243,7 @@ class LinuxCNCWrapper():
             self.status.motion.feed_hold_enabled = False
             self.status.motion.feed_override_enabled = False
             self.status.motion.feedrate = 0.0
-            self.status.motion.g5x_index = 0
+            self.status.motion.g5x_index = ORIGIN_G54
             self.status.motion.g5x_offset.MergeFrom(self.zero_position())
             self.status.motion.g92_offset.MergeFrom(self.zero_position())
             self.status.motion.id = 0
@@ -1235,7 +1252,7 @@ class LinuxCNCWrapper():
             self.status.motion.joint_position.MergeFrom(self.zero_position())
             self.status.motion.motion_line = 0
             self.status.motion.motion_type = 0
-            self.status.motion.motion_mode = 0
+            self.status.motion.motion_mode = EMC_TRAJ_MODE_FREE
             self.status.motion.paused = False
             self.status.motion.position.MergeFrom(self.zero_position())
             self.status.motion.probe_tripped = False
@@ -1252,7 +1269,7 @@ class LinuxCNCWrapper():
             self.status.motion.spindle_override_enabled = False
             self.status.motion.spindle_speed = 0.0
             self.status.motion.spindlerate = 0.0
-            self.status.motion.state = 0
+            self.status.motion.state = UNINITIALIZED_STATUS
             self.status.motion.max_velocity = 0.0
             self.status.motion.max_acceleration = 0.0
             self.motionFirstrun = False
@@ -1803,7 +1820,7 @@ class LinuxCNCWrapper():
 
     def add_pparams(self):
         parameters = ProtocolParameters()
-        parameters.keepalive_timer = self.pingInterval * 1000
+        parameters.keepalive_timer = int(self.pingInterval * 1000.0)
         self.txStatus.pparams.MergeFrom(parameters)
 
     def poll(self):
@@ -2320,35 +2337,6 @@ class LinuxCNCWrapper():
             self.linuxcncErrors.append(str(e))
 
 
-def choose_ip(pref):
-    '''
-    given an interface preference list, return a tuple (interface, IPv4)
-    or None if no match found
-    If an interface has several IPv4 addresses, the first one is picked.
-    pref is a list of interface names or prefixes:
-
-    pref = ['eth0','usb3']
-    or
-    pref = ['wlan','eth', 'usb']
-    '''
-
-    # retrieve list of network interfaces
-    interfaces = netifaces.interfaces()
-
-    # find a match in preference oder
-    for p in pref:
-        for i in interfaces:
-            if i.startswith(p):
-                ifcfg = netifaces.ifaddresses(i)
-                # we want the first IPv4 address
-                try:
-                    ip = ifcfg[netifaces.AF_INET][0]['addr']
-                except KeyError:
-                    continue
-                return (i, ip)
-    return None
-
-
 shutdown = False
 
 
@@ -2390,20 +2378,13 @@ def main():
     mki.read(mkini)
     mkUuid = mki.get("MACHINEKIT", "MKUUID")
     remote = mki.getint("MACHINEKIT", "REMOTE")
-    prefs = mki.get("MACHINEKIT", "INTERFACES").split()
 
     if remote == 0:
         print("Remote communication is deactivated, mkwrapper will use the loopback interfaces")
         print(("set REMOTE in " + mkini + " to 1 to enable remote communication"))
-        iface = ['lo', '127.0.0.1']
-    else:
-        iface = choose_ip(prefs)
-        if not iface:
-            sys.stderr.write("failed to determine preferred interface (preference = %s)\n" % prefs)
-            sys.exit(1)
 
     if debug:
-        print(("announcing mkwrapper on " + str(iface)))
+        print("announcing mkwrapper")
 
     context = zmq.Context()
     context.linger = 0
@@ -2413,14 +2394,20 @@ def main():
     fileService = None
     mkwrapper = None
     try:
-        fileService = FileService(iniFile=iniFile, svcUuid=mkUuid, ip=iface[1],
-                                 debug=debug)
+        hostname = socket.gethostname().split('.')[0] + '.local.'
+        fileService = FileService(iniFile=iniFile,
+                                  svcUuid=mkUuid,
+                                  host=hostname,
+                                  loopback=(not remote),
+                                  debug=debug)
         fileService.start()
 
-        mkwrapper = LinuxCNCWrapper(context, ip=iface[1],
-                                 iniFile=iniFile,
-                                 svcUuid=mkUuid,
-                                 debug=debug)
+        mkwrapper = LinuxCNCWrapper(context,
+                                    host=hostname,
+                                    loopback=(not remote),
+                                    iniFile=iniFile,
+                                    svcUuid=mkUuid,
+                                    debug=debug)
 
         while fileService.running and mkwrapper.running and not check_exit():
             time.sleep(1)

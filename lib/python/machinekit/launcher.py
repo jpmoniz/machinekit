@@ -6,12 +6,14 @@ import signal
 from machinekit import compat
 
 _processes = []
+_realtimeStarted = False
 
 
 # ends a running Machinekit session
 def end_session():
     stop_processes()
-    stop_realtime()
+    if _realtimeStarted:  # Stop realtime only when explicitely started
+        stop_realtime()
 
 
 # checks wheter a single command is available or not
@@ -36,7 +38,7 @@ def cleanup_session():
     pids = []
     commands = ['configserver', 'halcmd', 'haltalk', 'webtalk', 'rtapi']
     process = subprocess.Popen(['ps', '-A'], stdout=subprocess.PIPE)
-    out, err = process.communicate()
+    out, _ = process.communicate()
     for line in out.splitlines():
         for command in commands:
             if command in line:
@@ -44,22 +46,30 @@ def cleanup_session():
                 pids.append(pid)
 
     if pids != []:
+        stop_realtime()
         sys.stdout.write("cleaning up leftover session... ")
         sys.stdout.flush()
-        subprocess.check_call('realtime stop', shell=True)
         for pid in pids:
             try:
-                os.kill(pid, signal.SIGTERM)
+                os.killpg(pid, signal.SIGTERM)
             except OSError:
                 pass
         sys.stdout.write('done\n')
+
+
+# starts a command, waits for termination and checks the output
+def check_process(command):
+    sys.stdout.write("running " + command.split(None, 1)[0] + "... ")
+    sys.stdout.flush()
+    subprocess.check_call(command, shell=True)
+    sys.stdout.write('done\n')
 
 
 # starts and registers a process
 def start_process(command, check=True, wait=1.0):
     sys.stdout.write("starting " + command.split(None, 1)[0] + "... ")
     sys.stdout.flush()
-    process = subprocess.Popen(command, shell=True)
+    process = subprocess.Popen(command, shell=True, preexec_fn=os.setsid)
     process.command = command
     if check:
         sleep(wait)
@@ -77,7 +87,7 @@ def stop_process(command):
         if command == processCommand:
             sys.stdout.write('stopping ' + command + '... ')
             sys.stdout.flush()
-            process.kill()
+            os.killpg(process.pid, signal.SIGTERM)
             process.wait()
             sys.stdout.write('done\n')
 
@@ -88,16 +98,20 @@ def stop_processes():
         sys.stdout.write('stopping ' + process.command.split(None, 1)[0]
                          + '... ')
         sys.stdout.flush()
-        process.terminate()
+        os.killpg(process.pid, signal.SIGTERM)
         process.wait()
         sys.stdout.write('done\n')
 
 
 # loads a HAL configuraton file
-def load_hal_file(filename):
+def load_hal_file(filename, ini=None):
     sys.stdout.write("loading " + filename + '... ')
     sys.stdout.flush()
-    subprocess.check_call('halcmd -f ' + filename, shell=True)
+    command = 'halcmd'
+    if ini is not None:
+        command += ' -i ' + ini
+    command += ' -f ' + filename
+    subprocess.check_call(command, shell=True)
     sys.stdout.write('done\n')
 
 
@@ -140,6 +154,7 @@ def start_realtime():
     sys.stdout.flush()
     subprocess.check_call('realtime start', shell=True)
     sys.stdout.write('done\n')
+    _realtimeStarted = True
 
 
 # stops realtime
@@ -148,6 +163,7 @@ def stop_realtime():
     sys.stdout.flush()
     subprocess.check_call('realtime stop', shell=True)
     sys.stdout.write('done\n')
+    _realtimeStarted = False
 
 
 # rip the Machinekit environment
@@ -207,6 +223,8 @@ def register_exit_handler():
 
 
 def _exitHandler(signum, frame):
+    del signum  # unused
+    del frame  # unused
     end_session()
     sys.exit(0)
 

@@ -16,9 +16,40 @@
 # Author: Michael Haberler <license AT mah DOT priv DOT at>
 # License: GPL Version 2 or later
 # Copyright (c) 2013 All rights reserved.
+import netifaces
 
 rtstyles =  ['xenomai-kernel', 'xenomai',
              'rt-preempt', 'rtai', 'posix']
+
+
+def choose_interface(pref):
+    '''
+    given an interface preference list, return a tuple (interface, ip)
+    or None if no match found
+    If an interface has several ip addresses, the first one is picked.
+    pref is a list of interface names or prefixes:
+
+    pref = ['eth0','usb3']
+    or
+    pref = ['wlan','eth', 'usb']
+    '''
+
+    # retrieve list of network interfaces
+    interfaces = netifaces.interfaces()
+
+    # find a match in preference oder
+    for p in pref:
+        for i in interfaces:
+            if i.startswith(p):
+                ifcfg = netifaces.ifaddresses(i)
+                # we want the first ip address
+                try:
+                    ip = ifcfg[netifaces.AF_INET][0]['addr']
+                except KeyError:
+                    continue
+                return (i, ip)
+    return None
+
 
 class Config(object):
 
@@ -41,10 +72,8 @@ class Config(object):
     # automatic substitution by configure starts here
 
     def __init__(self):
-        self.config_date = "@DATE@"
         self.GIT_VERSION = "@GIT_VERSION@"
         self.GIT_CONFIG_SHA="@GIT_CONFIG_SHA@"
-        self.CONFIG_DATE="@CONFIG_DATE@"
         self.EMC2_HOME = "@EMC2_HOME@"
         self.BUILD_DRIVERS="@BUILD_DRIVERS@"
         self.SUBST="@BUILD_DRIVERS@"

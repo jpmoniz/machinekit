@@ -635,6 +635,13 @@ static int localEmcTrajAxisMask = 0;
 static double localEmcTrajLinearUnits = 1.0;
 static double localEmcTrajAngularUnits = 1.0;
 static int localEmcTrajMotionId = 0;
+//FIXME if you can't beat em...
+static struct state_tag_t localEmcTrajTag;
+
+int emcTrajUpdateTag(StateTag const &tag) {
+    localEmcTrajTag = tag.get_state_tag();
+    return 0;
+}
 
 int emcTrajSetAxes(int axes, int axismask)
 {
@@ -991,6 +998,7 @@ int emcTrajLinearMove(EmcPose end, int type, double vel, double ini_maxvel, doub
     emcmotCommand.pos = end;
 
     emcmotCommand.id = localEmcTrajMotionId;
+    emcmotCommand.tag = localEmcTrajTag;
     emcmotCommand.motion_type = type;
     emcmotCommand.vel = vel;
     emcmotCommand.ini_maxvel = ini_maxvel;
@@ -1029,6 +1037,7 @@ int emcTrajCircularMove(EmcPose end, PM_CARTESIAN center,
 
     emcmotCommand.turn = turn;
     emcmotCommand.id = localEmcTrajMotionId;
+    emcmotCommand.tag = localEmcTrajTag;
 
     emcmotCommand.vel = vel;
     emcmotCommand.ini_maxvel = ini_maxvel;
@@ -1058,6 +1067,7 @@ int emcTrajProbe(EmcPose pos, int type, double vel, double ini_maxvel, double ac
     emcmotCommand.command = EMCMOT_PROBE;
     emcmotCommand.pos = pos;
     emcmotCommand.id = localEmcTrajMotionId;
+    emcmotCommand.tag = localEmcTrajTag;
     emcmotCommand.motion_type = type;
     emcmotCommand.vel = vel;
     emcmotCommand.ini_maxvel = ini_maxvel;
@@ -1079,6 +1089,7 @@ int emcTrajRigidTap(EmcPose pos, double vel, double ini_maxvel, double acc)
     emcmotCommand.command = EMCMOT_RIGID_TAP;
     emcmotCommand.pos.tran = pos.tran;
     emcmotCommand.id = localEmcTrajMotionId;
+    emcmotCommand.tag = localEmcTrajTag;
     emcmotCommand.vel = vel;
     emcmotCommand.ini_maxvel = ini_maxvel;
     emcmotCommand.acc = acc;
@@ -1128,6 +1139,9 @@ int emcTrajUpdate(EMC_TRAJ_STAT * stat)
     stat->activeQueue = emcmotStatus.activeDepth;
     stat->queueFull = emcmotStatus.queueFull;
     stat->id = emcmotStatus.id;
+    StateTag newtag(emcmotStatus.tag);
+    //TODO assignment operator
+    stat->tag = newtag;
     stat->motion_type = emcmotStatus.motionType;
     stat->distance_to_go = emcmotStatus.distance_to_go;
     stat->dtg = emcmotStatus.dtg;
@@ -1340,7 +1354,7 @@ int emcMotionSetDebug(int debug)
     @parameter	start	value set at start of motion
     @parameter	end	value set at end of motion
 */
-int emcMotionSetAout(unsigned char index, double start, double end, unsigned char now)
+int emcMotionSetAout(unsigned int index, double start, double end, unsigned char now)
 {
     emcmotCommand.command = EMCMOT_SET_AOUT;
     emcmotCommand.now = now;
@@ -1363,7 +1377,7 @@ int emcMotionSetAout(unsigned char index, double start, double end, unsigned cha
     @parameter	start	value set at start of motion
     @parameter	end	value set at end of motion
 */
-int emcMotionSetDout(unsigned char index, unsigned char start,
+int emcMotionSetDout(unsigned int index, unsigned char start,
 		     unsigned char end, unsigned char now)
 {
     emcmotCommand.command = EMCMOT_SET_DOUT;
@@ -1543,7 +1557,7 @@ int emcMotionUpdate(EMC_MOTION_STAT * stat)
 int emcSetupArcBlends(int arcBlendEnable,
         int arcBlendFallbackEnable,
         int arcBlendOptDepth,
-        double arcBlendGapCycles,
+        int arcBlendGapCycles,
         double arcBlendRampFreq) {
 
     emcmotCommand.command = EMCMOT_SETUP_ARC_BLENDS;

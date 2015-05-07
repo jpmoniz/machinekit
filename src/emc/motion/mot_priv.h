@@ -255,7 +255,7 @@ extern int num_joints;
    but can be altered at motmod insmod time */
 extern int num_dio;
 
-/* userdefined number of analog IO. default is 4. (EMCMOT_MAX_AIO=16), 
+/* userdefined number of analog IO. default is 4. (EMCMOT_MAX_AIO=64), 
    but can be altered at motmod insmod time */
 extern int num_aio;
 
@@ -309,11 +309,11 @@ extern void emcmotController(void *arg, long period);
 extern void emcmotSetCycleTime(unsigned long nsec);
 
 /* these are related to synchronized I/O */
-extern void emcmotDioWrite(int index, char value);
-extern void emcmotAioWrite(int index, double value);
+extern void emcmotDioWrite(unsigned int index, hal_bit_t value);
+extern void emcmotAioWrite(unsigned int index, hal_float_t value);
 
-extern void emcmotSetRotaryUnlock(int axis, int unlock);
-extern int emcmotGetRotaryIsUnlocked(int axis);
+extern void emcmotSetRotaryUnlock(int axis,  hal_bit_t unlock);
+extern hal_bit_t emcmotGetRotaryIsUnlocked(int axis);
 
 /* homing is no longer in control.c, make functions public */
 extern void do_homing_sequence(void);

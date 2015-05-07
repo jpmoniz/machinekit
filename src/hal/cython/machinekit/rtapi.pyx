@@ -134,6 +134,14 @@ cdef char ** _to_argv(args):
     ret[l] =  NULL # zero-terminate
     return ret
 
+import sys
+import os
+from machinekit import hal, config
+if sys.version_info >= (3, 0):
+    import configparser
+else:
+    import ConfigParser as configparser
+
 class RTAPIcommand:
     ''' connect to the rtapi_app RT demon to pass commands '''
 
@@ -143,8 +151,21 @@ class RTAPIcommand:
         cdef char* c_uri = uri
         if uri == "":
             c_uri = NULL
-        if uuid == "" and uri == "":
-            raise RuntimeError("need either a uuid=<uuid> or uri=<uri> parameter")
+        if uuid == "" and uri == "":  # try to get the uuid from the ini
+            mkconfig = config.Config()
+            mkini = os.getenv("MACHINEKIT_INI")
+            if mkini is None:
+                mkini = mkconfig.MACHINEKIT_INI
+            if not os.path.isfile(mkini):
+                raise RuntimeError("MACHINEKIT_INI " + mkini + " does not exist")
+
+            cfg = configparser.ConfigParser()
+            cfg.read(mkini)
+            try:
+                uuid = cfg.get("MACHINEKIT", "MKUUID")
+            except configparser.NoSectionError or configparser.NoOptionError:
+                raise RuntimeError("need either a uuid=<uuid> or uri=<uri> parameter")
+            c_uuid = uuid
         r = rtapi_connect(instance, c_uri, c_uuid)
         if r:
             raise RuntimeError("cant connect to rtapi: %s" % strerror(-r))
@@ -161,13 +182,15 @@ class RTAPIcommand:
         if r:
             raise RuntimeError("rtapi_delthread failed:  %s" % strerror(-r))
 
-    def loadrt(self,*args, instance=0):
+    def loadrt(self,*args, instance=0, **kwargs):
         cdef char** argv
         cdef char *name
 
         if len(args) < 1:
             raise RuntimeError("loadrt needs at least the module name as argument")
         name = args[0]
+        for key in kwargs.keys():
+            args +=('%s=%s' % (key, str(kwargs[key])), )
         argv = _to_argv(args[1:])
         r = rtapi_loadrt( instance, name, <const char **>argv)
         free(argv)
@@ -180,6 +203,34 @@ class RTAPIcommand:
         r = rtapi_unloadrt( instance, name)
         if r:
             raise RuntimeError("rtapi_unloadrt '%s' failed: %s" % (name,strerror(-r)))
+
+    def newinst(self, *args, instance=0, **kwargs):
+        cdef char** argv
+        cdef char *name
+
+        if len(args) < 2:
+            raise RuntimeError("newinst needs at least module and instance name as argument")
+        comp = args[0]
+        instname = args[1]
+        for key in kwargs.keys():
+            args +=('%s=%s' % (key, str(kwargs[key])), )
+        argv = _to_argv(args[2:])
+
+        if comp not in hal.components:
+             rtapi_loadrt(instance, comp, <const char **>argv)
+        if instname in hal.instances:
+            raise RuntimeError('instance with name ' + instname + ' already exists')
+
+        r = rtapi_newinst( instance, comp, instname, <const char **>argv)
+        free(argv)
+        if r:
+            raise RuntimeError("rtapi_newinst '%s' failed: %s" % (args,strerror(-r)))
+
+    def delinst(self, char *instname, instance=0):
+        r = rtapi_delinst( instance, instname)
+        if r:
+            raise RuntimeError("rtapi_delinst '%s' failed: %s" % (instname,strerror(-r)))
+
 
 # default module to connect to RTAPI:
 __rtapimodule = None

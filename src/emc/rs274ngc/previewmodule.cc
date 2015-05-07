@@ -132,7 +132,7 @@ static void z_shutdown(void)
     fprintf(stderr, "preview: socket shutdown\n");
     if (n_containers > 0)
     {
-        fprintf(stderr, "preview: %zu containers %zu preview msgs %zu bytes  avg=%d bytes/container\n",
+        fprintf(stderr, "preview: %zu containers %zu preview msgs %zu bytes  avg=%zu bytes/container\n",
             n_containers, n_messages, n_bytes, n_bytes/n_containers);
     }
     zctx_destroy(&z_context);
@@ -687,6 +687,7 @@ void PROGRAM_END() {}
 void FINISH() {}
 void PALLET_SHUTTLE() {}
 void SELECT_POCKET(int pocket, int tool) {}
+void UPDATE_TAG(StateTag tag) {}
 void OPTIONAL_PROGRAM_STOP() {}
 void START_CHANGE() {}
 int  GET_EXTERNAL_TC_FAULT() {return 0;}

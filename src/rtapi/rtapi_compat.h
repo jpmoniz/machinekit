@@ -86,19 +86,19 @@ extern long int simple_strtol(const char *nptr, char **endptr, int base);
 
 
 // simple interface to hal_create_thread()/hal_thread_delete()
-// through /proc/rtapi/hal/threadcmd (kernel threadstyles only)
+// through /proc/rtapi/hal/rtapicmd (kernel threadstyles only)
 //
 // to start a thread, write 'newthread' <threadname> <period> <fp> <cpu>'
 // example:
-//    echo newthread servo-thread 1000000 1 -1 >/proc/rtapi/hal/threadcmd
+//    echo newthread servo-thread 1000000 1 -1 >/proc/rtapi/hal/rtapicmd
 //
 // to delete a thread, write 'delthread <threadname>'
-//    echo delthread servo-thread >/proc/rtapi/hal/threadcmd
+//    echo delthread servo-thread >/proc/rtapi/hal/rtapicmd
 //
 // HAL return values are reflected in the return value to write()
 //
-#define PROCFS_THREADCMD "/proc/rtapi/hal/threadcmd"
-extern int procfs_threadcmd(const char *format, ...);
+#define PROCFS_RTAPICMD "/proc/rtapi/hal/rtapicmd"
+extern int procfs_cmd(const char *path, const char *format, ...);
 
 // kernel tests in rtapi_compat.c
 extern int kernel_is_xenomai();
@@ -161,6 +161,14 @@ extern int module_path(char *result, const char *basename);
  */
 
 extern int get_rtapi_config(char *result, const char *param, int n);
+
+// diagnostics: retrieve the rpath this binary was linked with
+//
+// returns malloc'd memory - caller MUST free returned string if non-null
+// example:  cc -g -Wall -Wl,-rpath,/usr/local/lib -Wl,-rpath,/usr/lib foo.c -o foo
+// rtapi_get_rpath() will return "/usr/local/lib:/usr/lib"
+
+extern const char *rtapi_get_rpath(void);
 
 SUPPORT_END_DECLS
 

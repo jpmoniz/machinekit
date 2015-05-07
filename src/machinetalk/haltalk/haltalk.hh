@@ -127,6 +127,7 @@ typedef struct htconf {
     unsigned ifIndex;
     char *service_uuid;
     int remote;
+    bool trap_signals;
 } htconf_t;
 
 typedef struct htself {
@@ -161,7 +162,7 @@ typedef struct htself {
 
     void       *z_halrcmd;
     const char *z_halrcmd_dsn;
-    int        z_halrcomp_port;
+    int        z_halrcmd_port;
     itemmap_t  items;
 
     htbridge_t *bridge;

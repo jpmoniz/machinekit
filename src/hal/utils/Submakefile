@@ -9,7 +9,11 @@ USERSRCS += $(sort $(HALCMDSRCS) $(HALSHSRCS) $(HALCMDCCSRCS))
 
 $(call TOOBJSDEPS, $(HALSHSRCS)) : EXTRAFLAGS = -fPIC
 $(call TOOBJSDEPS, hal/utils/halsh.c) : EXTRAFLAGS += $(TCL_CFLAGS)
-../tcl/hal.so: $(call TOOBJS, $(HALSHSRCS)) ../lib/liblinuxcncini.so.0 ../lib/liblinuxcnchal.so.0
+../tcl/hal.so: $(call TOOBJS, $(HALSHSRCS)) \
+	../lib/liblinuxcncini.so.0 \
+	../lib/liblinuxcnchal.so.0 \
+	../lib/liblinuxcnc-pb2++.so.0 \
+	../lib/libmtalk.so.0
 	$(ECHO) Linking $(notdir $@)
 	$(Q)$(CC) $(LDFLAGS) -shared $^  $(TCL_LIBS) -lm -o $@
 TARGETS += ../tcl/hal.so
@@ -108,6 +112,12 @@ endif
 	$(ECHO) Copying python script $(notdir $@)
 	$(Q)(echo '#!$(PYTHON)'; sed '1 { /^#!/d; }' $<) > $@.tmp && chmod +x $@.tmp && mv -f $@.tmp $@
 
+../bin/instcomp: ../bin/%: objects/hal/utils/%.py
+	@$(ECHO) Syntax checking python script $(notdir $@)
+	$(Q)$(PYTHON) -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $<
+	$(ECHO) Copying python script $(notdir $@)
+	$(Q)(echo '#!$(PYTHON)'; sed '1 { /^#!/d; }' $<) > $@.tmp && chmod +x $@.tmp && mv -f $@.tmp $@
+
 ../bin/yapps: ../bin/%: hal/utils/%.py
 	@$(ECHO) Syntax checking python script $(notdir $@)
 	$(Q)$(PYTHON) -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' $<
@@ -118,3 +128,13 @@ TARGETS += ../bin/comp
 objects/%.py: %.g ../bin/yapps
 	@mkdir -p $(dir $@)
 	$(Q)../bin/yapps $< $@
+
+
+TARGETS += ../bin/instcomp
+objects/%.py: %.g ../bin/yapps
+	@mkdir -p $(dir $@)
+	$(Q)../bin/yapps $< $@
+
+clean: hal-utils-clean
+hal-utils-clean:
+	rm -f ../bin/yapps ../lib/python/yapps/*.pyc

@@ -97,15 +97,27 @@ static const char *service_uuid;
 static int remote = 0;
 static const char *ipaddr = "127.0.0.1";
 static AvahiCzmqPoll *av_loop;
+static bool trap_signals = true;
+static int full, locked;
+static size_t max_msgs, max_bytes; // stats
 
 // messages tend to come bunched together, e.g during startup and shutdown
 // poll faster if a message was read, and decay the poll timer up to msg_poll_max
 // if no messages are pending
 // this way we retrieve bunched messages fast without much overhead in idle times
 static int msg_poll_max = 200; // maximum msgq checking interval, mS
-static int msg_poll_min = 20;  // minimum msgq checking interval
-static int msg_poll_inc = 10;  // increment interval if no message read up to msg_poll_max
-static int msg_poll =     20;  // current delay; startup fast
+
+
+#ifdef FASTLOG
+static int msg_poll_min = 5;  // minimum msgq checking interval
+static int msg_poll_inc = 1;  // increment interval if no message read up to msg_poll_max
+static int msg_poll =     10;  // current delay; startup fast
+#else
+static int msg_poll_min = 10;  // minimum msgq checking interval
+static int msg_poll_inc = 5;  // increment interval if no message read up to msg_poll_max
+static int msg_poll =     10;  // current delay; startup fast
+#endif
+
 static int polltimer_id;      // as returned by zloop_timer()
 static int shutdowntimer_id;
 
@@ -512,6 +524,10 @@ static void
 cleanup_actions(void)
 {
     int retval;
+    size_t max_ringmem = max_bytes + max_msgs * 8; // includes record overhead
+    syslog_async(LOG_DEBUG,"log buffer hwm: %zu% (%zu msgs, %zu bytes out of %d)",
+		 (max_ringmem*100)/MESSAGE_RING_SIZE,
+		 max_msgs, max_ringmem, MESSAGE_RING_SIZE);
 
     if (global_data) {
 	if (global_data->rtapi_app_pid > 0) {
@@ -567,10 +583,24 @@ message_poll_cb(zloop_t *loop, int  timer_id, void *args)
     zframe_t *z_pbframe;
     int current_interval = msg_poll;
 
+    if (global_data->error_ring_full > full) {
+	syslog_async(LOG_ERR, "msgd:%d: message ring overrun (full): %d messages lost",
+		     global_data->error_ring_full - full);
+	full = global_data->error_ring_full;
+    }
+    if (global_data->error_ring_locked > locked) {
+	syslog_async(LOG_ERR, "msgd:%d: message ring overrun (locked): %d messages lost",
+		     global_data->error_ring_locked - locked);
+	locked = global_data->error_ring_locked;
+    }
+
+    size_t n_msgs = 0, n_bytes = 0;
 
     while ((retval = record_read(&rtapi_msg_buffer,
 				 (const void **) &msg, &msg_size)) == 0) {
 	payload_length = msg_size - sizeof(rtapi_msgheader_t);
+	n_msgs++;
+	n_bytes += msg_size;
 
 	switch (msg->encoding) {
 	case MSG_ASCII:
@@ -627,11 +657,18 @@ message_poll_cb(zloop_t *loop, int  timer_id, void *args)
 	    // whine
 	}
 	record_shift(&rtapi_msg_buffer);
-	msg_poll = msg_poll_min;
+	msg_poll = msg_poll_min; // keep going quick
     }
+    // done - decay the timer
     msg_poll += msg_poll_inc;
     if (msg_poll > msg_poll_max)
 	msg_poll = msg_poll_max;
+
+    // update stats
+    if (n_msgs > max_msgs)
+	max_msgs = n_msgs;
+    if (n_bytes > max_bytes)
+	max_bytes = n_bytes;
 
     if (current_interval != msg_poll) {
 	zloop_timer_end(loop, polltimer_id);
@@ -669,6 +706,7 @@ static struct option long_options[] = {
     { "svcuuid", required_argument, 0, 'R'},
     { "interfaces", required_argument, 0, 'n'},
     { "shmdrv_opts", required_argument, 0, 'o'},
+    { "nosighdlr",   no_argument,    0, 'G'},
 
     {0, 0, 0, 0}
 };
@@ -695,11 +733,14 @@ int main(int argc, char **argv)
     while (1) {
 	int option_index = 0;
 	int curind = optind;
-	c = getopt_long (argc, argv, "hI:sFf:i:SU:W:u:r:n:T:M:",
+	c = getopt_long (argc, argv, "GhI:sFf:i:SU:W:u:r:n:T:M:",
 			 long_options, &option_index);
 	if (c == -1)
 	    break;
 	switch (c)	{
+	case 'G':
+	    trap_signals = false; // ease debugging with gdb
+	    break;
 	case 'F':
 	    foreground++;
 	    break;
@@ -764,6 +805,10 @@ int main(int argc, char **argv)
 	    exit(0);
 	}
     }
+
+    if (trap_signals && (getenv("NOSIGHDLR") != NULL))
+	trap_signals = false;
+
     if (inifile && ((inifp = fopen(inifile,"r")) == NULL)) {
 	fprintf(stderr,"msgd: cant open inifile '%s'\n", inifile);
     }
@@ -928,7 +973,7 @@ int main(int argc, char **argv)
 		 GOOGLE_PROTOBUF_VERSION / 1000000,
 		 (GOOGLE_PROTOBUF_VERSION / 1000) % 1000,
 		 GOOGLE_PROTOBUF_VERSION % 1000);
-    syslog_async(LOG_INFO,"configured: %s sha=%s", CONFIG_DATE, GIT_CONFIG_SHA);
+    syslog_async(LOG_INFO,"configured: sha=%s", GIT_CONFIG_SHA);
     syslog_async(LOG_INFO,"built:      %s %s sha=%s",  __DATE__, __TIME__, GIT_BUILD_SHA);
     if (strcmp(GIT_CONFIG_SHA,GIT_BUILD_SHA))
 	syslog_async(LOG_WARNING, "WARNING: git SHA's for configure and build do not match!");
@@ -945,8 +990,10 @@ int main(int argc, char **argv)
     dup2(fd, STDIN_FILENO);
     close(fd);
 
-    signal_fd = setup_signals(sigaction_handler, SIGINT, SIGQUIT, SIGKILL, SIGTERM, -1);
-    assert(signal_fd > -1);
+    if (trap_signals) {
+	signal_fd = setup_signals(sigaction_handler, SIGINT, SIGQUIT, SIGKILL, SIGTERM, -1);
+	assert(signal_fd > -1);
+    }
 
     // suppress default handling of signals in zctx_new()
     // since we're using signalfd()
@@ -1003,6 +1050,15 @@ int main(int argc, char **argv)
     }
 
     if (logpub && remote) {
+	char hostname[PATH_MAX];
+	char uri[PATH_MAX];
+
+	if (gethostname(hostname, sizeof(hostname)) < 0) {
+	    syslog_async(LOG_ERR, "%s: gethostname() failed ?! %s\n",
+			 progname, strerror(errno));
+	    exit(1);
+	}
+	snprintf(uri,sizeof(uri), "tcp://%s.local.:%d",hostname, logpub_port);
 
 	if (!(av_loop = avahi_czmq_poll_new(loop))) {
 	    syslog_async(LOG_ERR, "%s: zeroconf: Failed to create avahi event loop object.",
@@ -1010,12 +1066,12 @@ int main(int argc, char **argv)
 	    exit(1);
 	}
 	char name[255];
-	snprintf(name,sizeof(name), "Log service on %s pid %d", ipaddr, getpid());
+	snprintf(name,sizeof(name), "Log service on %s.local pid %d", hostname, getpid());
 	logpub_publisher = zeroconf_service_announce(name,
 						     MACHINEKIT_DNSSD_SERVICE_TYPE,
 						     LOG_DNSSD_SUBTYPE,
 						     logpub_port,
-						     (char *)dsn,
+						     remote ? uri : (char *)dsn,
 						     service_uuid,
 						     process_uuid_str,
 						     "log",
@@ -1026,7 +1082,8 @@ int main(int argc, char **argv)
     }
 
     zmq_pollitem_t signal_poller =  { 0, signal_fd,   ZMQ_POLLIN };
-    zloop_poller (loop, &signal_poller, s_handle_signal, NULL);
+    if (trap_signals)
+	zloop_poller (loop, &signal_poller, s_handle_signal, NULL);
 
     if (logpub) {
 	zmq_pollitem_t logpub_poller = { logpub, 0, ZMQ_POLLIN };
